@@ -1,67 +1,63 @@
 # `open-in-editor`
 
-A high-performance, deterministic command-line utility that ingests noisy terminal strings—compiler diagnostics, stack traces, `ripgrep` lines, `git status` matrices, unified diff headers, and Markdown/file URIs—and either emits structured coordinates (`JSON`) or opens the resolved file directly in your editor or terminal viewer.
+A command-line utility that parses messy terminal output (compiler diagnostics, stack traces, `ripgrep` lines, `git status` entries, unified diff headers, and Markdown or file URIs) and either prints JSON coordinates or opens the resolved file in an editor or terminal viewer.
 
-Designed for sub-$2\text{ ms}$ cold-start latency using pre-compiled `LazyLock` regular expressions and zero-shell-evaluation (`execve`) process vectorization.
+It uses pre-compiled `LazyLock` regular expressions for sub-2 ms cold start and spawns editors directly via `execve` without shell evaluation.
 
-## Key Features
+## Features
 
-* **5-Stage Deterministic Normalization Pipeline:**
+The parser runs a five-stage pipeline:
 
-  1. **De-noising & Boundary Peeling:** Strips 7-bit/8-bit ANSI SGR color sequences, unpacks OSC 8 terminal hyperlinks, trims balanced wrapper delimiters (`"..."`, `'...'`, `` `...` ``, `(...)`, `[...]`, `{...}`, `<...>`), recovers from unbalanced triple-click mouse selections, and strips trailing sentence punctuation (`,` and `;`).
+1. De-noising and boundary peeling: strips 7-bit and 8-bit ANSI SGR color sequences, unpacks OSC 8 terminal hyperlinks, trims balanced wrapper delimiters (`"..."`, `'...'`, `` `...` ``, `(...)`, `[...]`, `{...}`, `<...>`), recovers from unbalanced triple-click mouse selections, and strips trailing `,` and `;` punctuation.
+2. Protocol and link unpacking: extracts targets from inline Markdown links (`[label](target)`), `file://` URIs (with RFC 3986 percent-decoding), and editor URI schemes (`vscode://`, `cursor://`, `zed://`, `windsurf://`).
+3. Version control disambiguation: strips `git status` porcelain prefixes (`M`, `MM`, `??`, `R100 old -> new`) and unified diff headers (`--- a/`, `+++ b/`). Checks the filesystem before stripping bare `a/` and `b/` prefixes so real top-level `a/` or `b/` directories stay intact.
+4. Coordinate and stack trace extraction: extracts `line`, `column`, `end_line`, and `end_column` across 10 formats including `ripgrep`, Rust `-->` diagnostics, Python tracebacks, and V8/Node.js stack frames (preserving Next.js and SvelteKit route groups like `src/routes/(app)/[id]/page.tsx`).
+5. Lexical path canonicalization: expands `~/` via `$HOME`, resolves relative paths against `--base-dir` (or `$PWD`) into absolute paths, and resolves `.` and `..` components without requiring the target file to exist on disk.
 
-  2. **Protocol & Link Unpacking:** Extracts targets from inline Markdown links (`[label](target)`), `file://` URIs (with RFC 3986 percent-decoding), and editor URI schemes (`vscode://`, `cursor://`, `zed://`, `windsurf://`).
+Editors launch via OS argument vectors (`argv`) with `--` option terminators, never passing unsanitized strings through `/bin/sh -c` or `eval`.
 
-  3. **Version Control Disambiguation:** Strips `git status` porcelain prefixes (`M`, `MM`, `??`, `R100 old -> new`) and unified diff headers (`--- a/`, `+++ b/`). Disambiguates bare `a/` and `b/` prefixes via filesystem introspection so real top-level `a/` or `b/` directories are never accidentally stripped.
+## Supported input formats
 
-  4. **Coordinate & Stack Trace Extraction:** Extracts `line`, `column`, `end_line`, and `end_column` across 10 distinct grammars including `ripgrep`, Rust `-->` diagnostics, Python tracebacks, and V8/Node.js stack frames (preserving Next.js/SvelteKit route groups like `src/routes/(app)/[id]/page.tsx`).
+Relative paths resolve against `--base-dir` (or `$PWD`, shown here as `/repo`) and output as absolute paths:
 
-  5. **Lexical Path Canonicalization:** Expands `~/` via `$HOME`, resolves relative paths against `--base-dir` (or `$PWD`) into absolute paths, and lexically resolves `.` and `..` components without requiring the target file to exist on disk.
-
-* **Shell-Injection-Safe Dispatch:** Spawns editors directly via OS argument vectors (`argv`) with `--` option terminators—never passing unsanitized strings through `/bin/sh -c` or `eval`.
-
-## Supported Input Formats
-
-Relative paths are always resolved against `--base-dir` (or `$PWD`, assumed to be `/repo` in the examples below) and emitted as absolute paths:
-
-| Grammar / Source | Raw Input Example | Resolved Path | Line | Col | End Line | End Col | 
-| ----- | ----- | ----- | ----- | ----- | ----- | ----- | 
-| **Standard / Ripgrep** | `src/main.rs:42:7:fn main() {` | `/repo/src/main.rs` | `42` | `7` | `null` | `null` | 
-| **Compiler Diagnostic** | `src/main.py:42:7: error: syntax` | `/repo/src/main.py` | `42` | `7` | `null` | `null` | 
-| **Rust `rustc` Arrow** | `  --> src/main.rs:42:7` | `/repo/src/main.rs` | `42` | `7` | `null` | `null` | 
-| **Python Traceback** | `File "/app/main.py", line 42, in run` | `/app/main.py` | `42` | `null` | `null` | `null` | 
-| **V8 / Node.js Trace** | `at load (/app/(grp)/[id]/page.tsx:42:7)` | `/app/(grp)/[id]/page.tsx` | `42` | `7` | `null` | `null` | 
-| **Colon Range** | `src/main.py:42-58` | `/repo/src/main.py` | `42` | `null` | `58` | `null` | 
-| **Parenthetical** | `src/main.py(42, 7)` or `src/main.py(42:7)` | `/repo/src/main.py` | `42` | `7` | `null` | `null` | 
-| **URI Fragment Range** | `src/main.py#L42C7-L58C12` | `/repo/src/main.py` | `42` | `7` | `58` | `12` | 
-| **Markdown + File URI** | `[Doc](file://localhost/tmp/a%20b.py#L10)` | `/tmp/a b.py` | `10` | `null` | `null` | `null` | 
-| **Git Status / Rename** | `R100 "src/old.py" -> "src/new.py"` | `/repo/src/new.py` | `null` | `null` | `null` | `null` | 
-| **Git Diff Header** | `+++ b/src/components/Button.tsx` | `/repo/src/components/Button.tsx` | `null` | `null` | `null` | `null` | 
+| Grammar / Source | Raw Input Example | Resolved Path | Line | Col | End Line | End Col |
+| ----- | ----- | ----- | ----- | ----- | ----- | ----- |
+| **Standard / Ripgrep** | `src/main.rs:42:7:fn main() {` | `/repo/src/main.rs` | `42` | `7` | `null` | `null` |
+| **Compiler Diagnostic** | `src/main.py:42:7: error: syntax` | `/repo/src/main.py` | `42` | `7` | `null` | `null` |
+| **Rust `rustc` Arrow** | `  --> src/main.rs:42:7` | `/repo/src/main.rs` | `42` | `7` | `null` | `null` |
+| **Python Traceback** | `File "/app/main.py", line 42, in run` | `/app/main.py` | `42` | `null` | `null` | `null` |
+| **V8 / Node.js Trace** | `at load (/app/(grp)/[id]/page.tsx:42:7)` | `/app/(grp)/[id]/page.tsx` | `42` | `7` | `null` | `null` |
+| **Colon Range** | `src/main.py:42-58` | `/repo/src/main.py` | `42` | `null` | `58` | `null` |
+| **Parenthetical** | `src/main.py(42, 7)` or `src/main.py(42:7)` | `/repo/src/main.py` | `42` | `7` | `null` | `null` |
+| **URI Fragment Range** | `src/main.py#L42C7-L58C12` | `/repo/src/main.py` | `42` | `7` | `58` | `12` |
+| **Markdown + File URI** | `[Doc](file://localhost/tmp/a%20b.py#L10)` | `/tmp/a b.py` | `10` | `null` | `null` | `null` |
+| **Git Status / Rename** | `R100 "src/old.py" -> "src/new.py"` | `/repo/src/new.py` | `null` | `null` | `null` | `null` |
+| **Git Diff Header** | `+++ b/src/components/Button.tsx` | `/repo/src/components/Button.tsx` | `null` | `null` | `null` | `null` |
 
 ## Installation
 
 ### Using mise (recommended)
 
-Install and activate globally via `mise`:
+Install globally with `mise`:
 
 ```bash
 mise use -g github:iloveitaly/open-in-editor
 ```
 
-### Pre-built Binaries
+### Pre-built binaries
 
-Download pre-compiled binaries for Linux (`x86_64`, `aarch64` musl), macOS (Apple Silicon, Intel), and Windows (`x86_64`, `aarch64`) directly from [GitHub Releases](https://github.com/iloveitaly/open-in-editor/releases).
+Download binaries for Linux (`x86_64`, `aarch64` musl), macOS (Apple Silicon, Intel), and Windows (`x86_64`, `aarch64`) from [GitHub Releases](https://github.com/iloveitaly/open-in-editor/releases).
 
-### From Source
+### From source
 
-Build and install locally using Cargo:
+Build and install locally with Cargo:
 
 ```bash
 cargo build --release
 cp target/release/open-in-editor ~/.local/bin/
 ```
 
-## CLI Usage
+## CLI usage
 
 ```
 Deterministic terminal file reference opener and editor dispatcher
@@ -79,9 +75,9 @@ Options:
   -h, --help                   Print help
 ```
 
-### 1. Direct Editor Dispatch
+### 1. Direct editor dispatch
 
-Pass messy terminal text as positional arguments or via standard input:
+Pass terminal output as positional arguments or on standard input:
 
 ```
 # Open a Rust compiler error directly in Neovim at line 42, column 7
@@ -94,14 +90,14 @@ pbpaste | open-in-editor --editor cursor
 open-in-editor --editor bat "file:///Users/dev/project/src/lib.rs#L42-L58"
 ```
 
-Flags can appear anywhere on the command line (e.g. `open-in-editor src/main.rs:4 --json`). If an input argument begins with a dash (such as diff headers like `--- a/foo.rs` or filenames like `-unusual.py`), use the `--` separator so the argument parser does not interpret it as a flag:
+Flags can appear anywhere on the command line (for example, `open-in-editor src/main.rs:4 --json`). When an input starts with a dash, such as diff headers (`--- a/foo.rs`) or filenames (`-unusual.py`), put `--` before it so the parser treats it as an input rather than a flag:
 
 ```
 # Pass leading-dash inputs safely using the -- separator
 open-in-editor --json -- "--- a/foo.rs"
 ```
 
-Inputs passed via standard input or inputs with leading whitespace (`"  --> src/main.rs:42:7"`) do not require `--`.
+Inputs passed on stdin or starting with whitespace (`"  --> src/main.rs:42:7"`) do not need `--`.
 
 Supported built-in `--editor` targets:
 
@@ -127,9 +123,9 @@ Supported built-in `--editor` targets:
 
 * `emacsclient`: `emacsclient -n +42:7 -- <file>`
 
-### 2. Custom Opener Templates (`--open-with`)
+### 2. Custom opener templates (`--open-with`)
 
-For custom editors or GUI wrappers, specify a template via `--open-with` or `FILE_OPENER_TEMPLATE`. Templates are tokenized into an argument vector (`argv`) without invoking a shell:
+For other editors or GUI wrappers, set a template with `--open-with` or `FILE_OPENER_TEMPLATE`. The template splits into an `argv` array without invoking a shell:
 
 ```
 open-in-editor \
@@ -139,9 +135,9 @@ open-in-editor \
 
 Supported placeholders: `{file}`, `{line}`, `{column}`, `{end_line}`, `{end_column}`.
 
-### 3. Structured JSON Output (`--json`)
+### 3. Structured JSON output (`--json`)
 
-Relative paths are always resolved against `--base-dir` (or `$PWD`) and emitted as absolute paths:
+Relative paths resolve against `--base-dir` (or `$PWD`) and output as absolute paths:
 
 ```
 $ open-in-editor --json "[Main](file://localhost/tmp/my%20file.py#L42C7-L58C12)"
@@ -151,11 +147,11 @@ $ open-in-editor -C /repo --json "src/main.rs:42:7"
 {"file":"/repo/src/main.rs","line":42,"column":7,"end_line":null,"end_column":null}
 ```
 
-## Workflow Integrations
+## Workflow integrations
 
 ### Tmux (`~/.tmux.conf`)
 
-Bind `Enter` in `copy-mode-vi` to open any highlighted path/diagnostic directly in your editor:
+Bind `Enter` in `copy-mode-vi` to open a selected path or diagnostic in your editor:
 
 ```
 # Pipe copy-mode selection directly into open-in-editor
@@ -167,9 +163,9 @@ bind-key C-o display-popup -E -w 85% -h 85% \
   "pbpaste | open-in-editor --editor nvim"
 ```
 
-### Interactive `ripgrep` + `fzf` Navigation
+### Interactive `ripgrep` and `fzf` navigation
 
-Decouple fuzzy searching from editor dispatch while handling filenames with spaces and special characters safely:
+Search with `ripgrep` and `fzf` and open the selected match directly:
 
 ```
 rg --color=always --line-number --column --no-heading --smart-case "" | \
@@ -182,10 +178,9 @@ rg --color=always --line-number --column --no-heading --smart-case "" | \
 
 ## Releasing
 
-Automated releases are managed via [Release Please](https://github.com/googleapis/release-please) and Conventional Commits:
+Releases use [Release Please](https://github.com/googleapis/release-please) and Conventional Commits:
 
-1. Write commits following the [Conventional Commits](https://www.conventionalcommits.org/) specification (e.g. `feat:`, `fix:`, `feat!:`, `chore:`).
-2. On push to `master`, Release Please maintains a release PR tracking unreleased changes and calculating the next semver version bump.
-3. Merging the release PR creates the GitHub release and git tag, triggering the binary matrix build to compile and upload release archives across Linux, macOS, and Windows.
-4. **Repository Setup:** Run `just github_setup` once initially to grant Actions workflow write permissions (required for PR creation and approval) and configure the branch protection ruleset on `master`.
-
+1. Write commits using [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `feat!:`, `chore:`).
+2. Pushes to `master` update a release PR with the changelog and next semver version.
+3. Merging that PR creates the GitHub release and tag, triggering binary builds for Linux, macOS, and Windows.
+4. Run `just github_setup` once on a new repository to grant Actions write and PR-approval permissions and set up force-push protection on `master`.
