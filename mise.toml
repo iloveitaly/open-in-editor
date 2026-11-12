@@ -1,5 +1,10 @@
 [tools]
 rust = "1.99.1"
+"github:casey/just" = "latest"
+jq = "latest"
+
+[bootstrap.packages]
+"apt:zsh" = { os = "linux" }
 
 [tasks.build]
 description = "Build the binary"

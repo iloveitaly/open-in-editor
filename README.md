@@ -40,17 +40,25 @@ Relative paths are always resolved against `--base-dir` (or `$PWD`, assumed to b
 
 ## Installation
 
-Build and install the static native binary using Cargo:
+### Using mise (recommended)
 
+Install and activate globally via `mise`:
+
+```bash
+mise use -g github:iloveitaly/open-in-editor
 ```
+
+### Pre-built Binaries
+
+Download pre-compiled binaries for Linux (`x86_64`, `aarch64` musl), macOS (Apple Silicon, Intel), and Windows (`x86_64`, `aarch64`) directly from [GitHub Releases](https://github.com/iloveitaly/open-in-editor/releases).
+
+### From Source
+
+Build and install locally using Cargo:
+
+```bash
 cargo build --release
 cp target/release/open-in-editor ~/.local/bin/
-```
-
-Run the unit test suite to verify all grammar extractors:
-
-```
-cargo test
 ```
 
 ## CLI Usage
@@ -66,7 +74,7 @@ Arguments:
 Options:
   -C, --base-dir <BASE_DIR>    Base directory for resolving relative paths and git diff disambiguation
       --json                   Emit structured JSON output instead of launching an editor
-  -e, --editor <EDITOR>        Target editor or viewer to launch (nvim, cursor, code, bat, hx, zed, subl, nano, emacsclient) [env: EDITOR=nvim] [default: nvim]
+  -e, --editor <EDITOR>        Target editor or viewer to launch (nvim, cursor, code, bat, cat, hx, zed, subl, nano, emacsclient) [env: EDITOR=nvim] [default: nvim]
       --open-with <OPEN_WITH>  Custom argument vector template (e.g. "nvim '+call cursor({line},{column})' -- {file}") [env: FILE_OPENER_TEMPLATE=]
   -h, --help                   Print help
 ```
@@ -106,6 +114,8 @@ Supported built-in `--editor` targets:
 * `code` / `vscode`: `code -g -- <file>:42:7`
 
 * `bat`: `bat -H 42:58 -r 37:63 -- <file>`
+
+* `cat`: `cat -- <file>` (prints the whole file)
 
 * `hx` / `helix`: `hx -- <file>:42:7`
 
@@ -169,3 +179,13 @@ rg --color=always --line-number --column --no-heading --smart-case "" | \
       --bind 'ctrl-o:become(open-in-editor --editor cursor {})' \
       --bind 'ctrl-v:become(open-in-editor --editor code {})'
 ```
+
+## Releasing
+
+Automated releases are managed via [Release Please](https://github.com/googleapis/release-please) and Conventional Commits:
+
+1. Write commits following the [Conventional Commits](https://www.conventionalcommits.org/) specification (e.g. `feat:`, `fix:`, `feat!:`, `chore:`).
+2. On push to `master`, Release Please maintains a release PR tracking unreleased changes and calculating the next semver version bump.
+3. Merging the release PR creates the GitHub release and git tag, triggering the binary matrix build to compile and upload release archives across Linux, macOS, and Windows.
+4. **Repository Setup:** Run `just github_setup` once initially to grant Actions workflow write permissions (required for PR creation and approval) and configure the branch protection ruleset on `master`.
+

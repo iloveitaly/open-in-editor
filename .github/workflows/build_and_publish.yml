@@ -1,0 +1,106 @@
+name: Build and Publish
+
+on:
+  push:
+    branches:
+      - master
+  pull_request: {}
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          bootstrap: true
+          bootstrap_args: --update --yes
+      - run: mise run lint
+      - run: mise run fmt
+
+  build:
+    name: Build
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          bootstrap: true
+          bootstrap_args: --update --yes
+      - uses: Swatinem/rust-cache@v2
+      - run: mise run test
+      - name: Make sure the CLI runs properly
+        run: cargo run --locked -- --help
+
+  release-please:
+    name: Release Please
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  binaries:
+    name: Binary ${{ matrix.target }}
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      - uses: jdx/mise-action@v5
+        with:
+          bootstrap: true
+          bootstrap_args: --update --yes
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: open-in-editor
+          target: ${{ matrix.target }}
+          archive: $bin-$tag-$target
+          include: README.md,LICENSE
+          checksum: sha256
+          locked: true
+          build-tool: cargo
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: refs/tags/${{ needs.release-please.outputs.tag_name }}

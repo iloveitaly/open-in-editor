@@ -1,0 +1,14 @@
+{
+  "description": "Deterministic terminal file reference parser and vector-safe editor dispatcher",
+  "homepage": "https://github.com/iloveitaly/open-in-editor",
+  "keywords": [
+    "cli",
+    "editor",
+    "terminal",
+    "parser",
+    "developer-tools",
+    "rust",
+    "neovim",
+    "vscode"
+  ]
+}
