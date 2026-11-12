@@ -1,6 +1,6 @@
 # `open-in-editor`
 
-A high-performance, deterministic command-line utility that ingests noisy terminal strings—compiler diagnostics, stack traces, `ripgrep` lines, `git status` matrices, unified diff headers, and Markdown/file URIs—and either emits structured coordinates (`JSON` or `NUL`-delimited streams) or opens the resolved file directly in your editor or terminal viewer.
+A high-performance, deterministic command-line utility that ingests noisy terminal strings—compiler diagnostics, stack traces, `ripgrep` lines, `git status` matrices, unified diff headers, and Markdown/file URIs—and either emits structured coordinates (`JSON`) or opens the resolved file directly in your editor or terminal viewer.
 
 Designed for sub-$2\text{ ms}$ cold-start latency using pre-compiled `LazyLock` regular expressions and zero-shell-evaluation (`execve`) process vectorization.
 
@@ -16,25 +16,27 @@ Designed for sub-$2\text{ ms}$ cold-start latency using pre-compiled `LazyLock` 
 
   4. **Coordinate & Stack Trace Extraction:** Extracts `line`, `column`, `end_line`, and `end_column` across 10 distinct grammars including `ripgrep`, Rust `-->` diagnostics, Python tracebacks, and V8/Node.js stack frames (preserving Next.js/SvelteKit route groups like `src/routes/(app)/[id]/page.tsx`).
 
-  5. **Lexical Path Canonicalization:** Expands `~/` via `$HOME`, resolves `.` and `..` components without requiring the target file to exist on disk, and guards leading-hyphen filenames (`-unusual.py` $\rightarrow$ `./-unusual.py`) against CLI flag misinterpretation.
+  5. **Lexical Path Canonicalization:** Expands `~/` via `$HOME`, resolves relative paths against `--base-dir` (or `$PWD`) into absolute paths, and lexically resolves `.` and `..` components without requiring the target file to exist on disk.
 
 * **Shell-Injection-Safe Dispatch:** Spawns editors directly via OS argument vectors (`argv`) with `--` option terminators—never passing unsanitized strings through `/bin/sh -c` or `eval`.
 
 ## Supported Input Formats
 
+Relative paths are always resolved against `--base-dir` (or `$PWD`, assumed to be `/repo` in the examples below) and emitted as absolute paths:
+
 | Grammar / Source | Raw Input Example | Resolved Path | Line | Col | End Line | End Col | 
 | ----- | ----- | ----- | ----- | ----- | ----- | ----- | 
-| **Standard / Ripgrep** | `src/main.rs:42:7:fn main() {` | `src/main.rs` | `42` | `7` | `null` | `null` | 
-| **Compiler Diagnostic** | `src/main.py:42:7: error: syntax` | `src/main.py` | `42` | `7` | `null` | `null` | 
-| **Rust `rustc` Arrow** | `  --> src/main.rs:42:7` | `src/main.rs` | `42` | `7` | `null` | `null` | 
+| **Standard / Ripgrep** | `src/main.rs:42:7:fn main() {` | `/repo/src/main.rs` | `42` | `7` | `null` | `null` | 
+| **Compiler Diagnostic** | `src/main.py:42:7: error: syntax` | `/repo/src/main.py` | `42` | `7` | `null` | `null` | 
+| **Rust `rustc` Arrow** | `  --> src/main.rs:42:7` | `/repo/src/main.rs` | `42` | `7` | `null` | `null` | 
 | **Python Traceback** | `File "/app/main.py", line 42, in run` | `/app/main.py` | `42` | `null` | `null` | `null` | 
 | **V8 / Node.js Trace** | `at load (/app/(grp)/[id]/page.tsx:42:7)` | `/app/(grp)/[id]/page.tsx` | `42` | `7` | `null` | `null` | 
-| **Colon Range** | `src/main.py:42-58` | `src/main.py` | `42` | `null` | `58` | `null` | 
-| **Parenthetical** | `src/main.py(42, 7)` or `src/main.py(42:7)` | `src/main.py` | `42` | `7` | `null` | `null` | 
-| **URI Fragment Range** | `src/main.py#L42C7-L58C12` | `src/main.py` | `42` | `7` | `58` | `12` | 
+| **Colon Range** | `src/main.py:42-58` | `/repo/src/main.py` | `42` | `null` | `58` | `null` | 
+| **Parenthetical** | `src/main.py(42, 7)` or `src/main.py(42:7)` | `/repo/src/main.py` | `42` | `7` | `null` | `null` | 
+| **URI Fragment Range** | `src/main.py#L42C7-L58C12` | `/repo/src/main.py` | `42` | `7` | `58` | `12` | 
 | **Markdown + File URI** | `[Doc](file://localhost/tmp/a%20b.py#L10)` | `/tmp/a b.py` | `10` | `null` | `null` | `null` | 
-| **Git Status / Rename** | `R100 "src/old.py" -> "src/new.py"` | `src/new.py` | `null` | `null` | `null` | `null` | 
-| **Git Diff Header** | `+++ b/src/components/Button.tsx` | `src/components/Button.tsx` | `null` | `null` | `null` | `null` | 
+| **Git Status / Rename** | `R100 "src/old.py" -> "src/new.py"` | `/repo/src/new.py` | `null` | `null` | `null` | `null` | 
+| **Git Diff Header** | `+++ b/src/components/Button.tsx` | `/repo/src/components/Button.tsx` | `null` | `null` | `null` | `null` | 
 
 ## Installation
 
@@ -54,6 +56,8 @@ cargo test
 ## CLI Usage
 
 ```
+Deterministic terminal file reference opener and editor dispatcher
+
 Usage: open-in-editor [OPTIONS] [INPUTS]...
 
 Arguments:
@@ -61,10 +65,8 @@ Arguments:
 
 Options:
   -C, --base-dir <BASE_DIR>    Base directory for resolving relative paths and git diff disambiguation
-      --anchor-relative        Anchor relative paths to --base-dir (or $PWD)
-      --json                   Emit structured JSON output instead of launching an editor [alias: --parse-only]
-      --nul                    Emit NUL-delimited fields (<file>\0<line>\0<col>\0<end_line>\0<end_col>\0) [alias: --print0]
-  -e, --editor <EDITOR>        Target editor or viewer to launch (nvim, cursor, code, bat, hx, zed, subl, nano, emacsclient) [env: EDITOR=] [default: nvim]
+      --json                   Emit structured JSON output instead of launching an editor
+  -e, --editor <EDITOR>        Target editor or viewer to launch (nvim, cursor, code, bat, hx, zed, subl, nano, emacsclient) [env: EDITOR=nvim] [default: nvim]
       --open-with <OPEN_WITH>  Custom argument vector template (e.g. "nvim '+call cursor({line},{column})' -- {file}") [env: FILE_OPENER_TEMPLATE=]
   -h, --help                   Print help
 ```
@@ -83,6 +85,15 @@ pbpaste | open-in-editor --editor cursor
 # Preview a line range in bat with +/- 5 lines of surrounding context
 open-in-editor --editor bat "file:///Users/dev/project/src/lib.rs#L42-L58"
 ```
+
+Flags can appear anywhere on the command line (e.g. `open-in-editor src/main.rs:4 --json`). If an input argument begins with a dash (such as diff headers like `--- a/foo.rs` or filenames like `-unusual.py`), use the `--` separator so the argument parser does not interpret it as a flag:
+
+```
+# Pass leading-dash inputs safely using the -- separator
+open-in-editor --json -- "--- a/foo.rs"
+```
+
+Inputs passed via standard input or inputs with leading whitespace (`"  --> src/main.rs:42:7"`) do not require `--`.
 
 Supported built-in `--editor` targets:
 
@@ -120,24 +131,14 @@ Supported placeholders: `{file}`, `{line}`, `{column}`, `{end_line}`, `{end_colu
 
 ### 3. Structured JSON Output (`--json`)
 
+Relative paths are always resolved against `--base-dir` (or `$PWD`) and emitted as absolute paths:
+
 ```
 $ open-in-editor --json "[Main](file://localhost/tmp/my%20file.py#L42C7-L58C12)"
 {"file":"/tmp/my file.py","line":42,"column":7,"end_line":58,"end_column":12}
-```
 
-### 4. Dependency-Free Shell Ingestion (`--nul` / `--print0`)
-
-To consume parsed fields in POSIX/Bash/Zsh scripts without spawning `jq` or risking whitespace word-splitting:
-
-```
-open-in-editor --nul "src/my file.py:42:7: error" | {
-  IFS= read -r -d '' file
-  IFS= read -r -d '' line
-  IFS= read -r -d '' col
-  IFS= read -r -d '' end_line
-  IFS= read -r -d '' end_col
-  printf "File: [%s] Line: [%s] Col: [%s]\n" "$file" "$line" "$col"
-}
+$ open-in-editor -C /repo --json "src/main.rs:42:7"
+{"file":"/repo/src/main.rs","line":42,"column":7,"end_line":null,"end_column":null}
 ```
 
 ## Workflow Integrations

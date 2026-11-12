@@ -90,20 +90,6 @@ impl FileReference {
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
-
-    /// Writes NUL-delimited fields: <file>\0<line>\0<column>\0<end_line>\0<end_column>\0
-    pub fn write_nul<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        let opt_str = |opt: Option<usize>| opt.map_or_else(String::new, |v| v.to_string());
-        write!(
-            writer,
-            "{}\0{}\0{}\0{}\0{}\0",
-            self.file,
-            opt_str(self.line),
-            opt_str(self.column),
-            opt_str(self.end_line),
-            opt_str(self.end_column),
-        )
-    }
 }
 
 // ============================================================================
@@ -112,17 +98,18 @@ impl FileReference {
 
 pub struct Normalizer {
     base_dir: PathBuf,
-    anchor_relative: bool,
 }
 
 impl Normalizer {
-    pub fn new(base_dir: Option<PathBuf>, anchor_relative: bool) -> Self {
-        let base =
-            base_dir.unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        Self {
-            base_dir: base,
-            anchor_relative,
-        }
+    pub fn new(base_dir: Option<PathBuf>) -> Self {
+        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let base = match base_dir {
+            Some(b) if b.is_absolute() => b,
+            Some(b) => cwd.join(b),
+            None => cwd,
+        };
+        let base = Self::lexical_normalize(&base);
+        Self { base_dir: base }
     }
 
     pub fn parse(&self, raw: &str) -> Option<FileReference> {
@@ -519,22 +506,17 @@ impl Normalizer {
             trimmed.to_string()
         };
 
-        let candidate_path = if self.anchor_relative && !Path::new(&expanded).is_absolute() {
+        let candidate_path = if !Path::new(&expanded).is_absolute() {
             self.base_dir.join(&expanded)
         } else {
             PathBuf::from(&expanded)
         };
 
         let normalized = Self::lexical_normalize(&candidate_path);
-        let mut final_str = normalized.to_string_lossy().into_owned();
+        let final_str = normalized.to_string_lossy().into_owned();
 
         if final_str.is_empty() {
             return None;
-        }
-
-        // Protect filenames starting with `-` so downstream tools never parse them as CLI flags
-        if final_str.starts_with('-') {
-            final_str = format!("./{final_str}");
         }
 
         Some(final_str)
@@ -741,17 +723,9 @@ struct Cli {
     #[arg(short = 'C', long = "base-dir")]
     base_dir: Option<PathBuf>,
 
-    /// Anchor relative paths to --base-dir (or $PWD)
-    #[arg(long)]
-    anchor_relative: bool,
-
     /// Emit structured JSON output instead of launching an editor
-    #[arg(long, visible_alias = "parse-only")]
+    #[arg(long)]
     json: bool,
-
-    /// Emit NUL-delimited fields (<file>\0<line>\0<col>\0<end_line>\0<end_col>\0)
-    #[arg(long = "nul", visible_alias = "print0")]
-    nul: bool,
 
     /// Target editor or viewer to launch (nvim, cursor, code, bat, hx, zed, subl, nano, emacsclient)
     #[arg(short, long, env = "EDITOR", default_value = "nvim")]
@@ -762,13 +736,12 @@ struct Cli {
     open_with: Option<String>,
 
     /// Raw input strings (reads from stdin if omitted)
-    #[arg(trailing_var_arg = true)]
     inputs: Vec<String>,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let normalizer = Normalizer::new(cli.base_dir.clone(), cli.anchor_relative);
+    let normalizer = Normalizer::new(cli.base_dir.clone());
 
     let lines: Vec<String> = if cli.inputs.is_empty() {
         io::stdin().lock().lines().map_while(Result::ok).collect()
@@ -789,8 +762,6 @@ fn main() -> ExitCode {
             if let Ok(json) = reference.to_json() {
                 let _ = writeln!(stdout, "{json}");
             }
-        } else if cli.nul {
-            let _ = reference.write_nul(&mut stdout);
         } else {
             match Dispatcher::open(&reference, &cli.editor, cli.open_with.as_deref()) {
                 Ok(status) if status.success() => {}
@@ -821,7 +792,7 @@ mod tests {
     use super::*;
 
     fn norm() -> Normalizer {
-        Normalizer::new(Some(PathBuf::from("/nonexistent_workspace")), false)
+        Normalizer::new(Some(PathBuf::from("/work")))
     }
 
     #[test]
@@ -831,7 +802,7 @@ mod tests {
         assert_eq!(
             n.parse(input),
             Some(FileReference {
-                file: "src/my file.py".into(),
+                file: "/work/src/my file.py".into(),
                 line: Some(42),
                 column: Some(7),
                 end_line: None,
@@ -846,7 +817,7 @@ mod tests {
         assert_eq!(
             n.parse("\"src/main.rs:42:7"),
             Some(FileReference {
-                file: "src/main.rs".into(),
+                file: "/work/src/main.rs".into(),
                 line: Some(42),
                 column: Some(7),
                 end_line: None,
@@ -885,23 +856,26 @@ mod tests {
     fn test_git_status_and_diff_prefixes() {
         let n = norm();
         // Leading space in git status porcelain (" M ")
-        assert_eq!(n.parse(" M src/main.py:12").unwrap().file, "src/main.py");
+        assert_eq!(
+            n.parse(" M src/main.py:12").unwrap().file,
+            "/work/src/main.py"
+        );
         // Rename with spaces and score
         assert_eq!(
             n.parse("R100 \"src/old name.py\" -> \"src/new name.py\"")
                 .unwrap()
                 .file,
-            "src/new name.py"
+            "/work/src/new name.py"
         );
         // Diff header and bare a/ prefix with coordinates
         assert_eq!(
             n.parse("+++ b/src/components/Button.tsx").unwrap().file,
-            "src/components/Button.tsx"
+            "/work/src/components/Button.tsx"
         );
         assert_eq!(
             n.parse("a/src/main.rs:42:7").unwrap(),
             FileReference {
-                file: "src/main.rs".into(),
+                file: "/work/src/main.rs".into(),
                 line: Some(42),
                 column: Some(7),
                 end_line: None,
@@ -917,7 +891,7 @@ mod tests {
         assert_eq!(
             n.parse("src/main.rs:42:7:fn main() {"),
             Some(FileReference {
-                file: "src/main.rs".into(),
+                file: "/work/src/main.rs".into(),
                 line: Some(42),
                 column: Some(7),
                 end_line: None,
@@ -928,7 +902,7 @@ mod tests {
         assert_eq!(
             n.parse("  --> src/main.rs:42:7"),
             Some(FileReference {
-                file: "src/main.rs".into(),
+                file: "/work/src/main.rs".into(),
                 line: Some(42),
                 column: Some(7),
                 end_line: None,
@@ -965,13 +939,65 @@ mod tests {
     }
 
     #[test]
-    fn test_leading_hyphen_protection_and_nul_output() {
+    fn test_leading_dash_filename() {
         let n = norm();
-        let r = n.parse("-unusual-filename.py:15:3").unwrap();
-        assert_eq!(r.file, "./-unusual-filename.py");
+        assert_eq!(
+            n.parse("-unusual-filename.py:15:3"),
+            Some(FileReference {
+                file: "/work/-unusual-filename.py".into(),
+                line: Some(15),
+                column: Some(3),
+                end_line: None,
+                end_column: None,
+            })
+        );
+    }
 
-        let mut buf = Vec::new();
-        r.write_nul(&mut buf).unwrap();
-        assert_eq!(buf, b"./-unusual-filename.py\x0015\x003\x00\x00\x00");
+    #[test]
+    fn test_cli_parsing_flag_after_input() {
+        let cli = Cli::try_parse_from(["open-in-editor", "src/a.rs:1", "--json"]).unwrap();
+        assert!(cli.json);
+        assert_eq!(cli.inputs, vec!["src/a.rs:1"]);
+    }
+
+    #[test]
+    fn test_cli_parsing_leading_dash_input_with_separator() {
+        let cli = Cli::try_parse_from(["open-in-editor", "--json", "--", "--- a/foo.rs"]).unwrap();
+        assert!(cli.json);
+        assert_eq!(cli.inputs, vec!["--- a/foo.rs"]);
+
+        let cli2 = Cli::try_parse_from(["open-in-editor", "--", "-unusual.py:10"]).unwrap();
+        assert_eq!(cli2.inputs, vec!["-unusual.py:10"]);
+    }
+
+    #[test]
+    fn test_cli_parsing_leading_whitespace_input() {
+        let cli = Cli::try_parse_from(["open-in-editor", "  --> src/main.rs:42:7"]).unwrap();
+        assert_eq!(cli.inputs, vec!["  --> src/main.rs:42:7"]);
+    }
+
+    #[test]
+    fn test_base_dir_git_disambiguation() {
+        let temp_dir = std::env::temp_dir().join(format!("oie_test_{}", std::process::id()));
+        let real_a_dir = temp_dir.join("a").join("nested");
+        let _ = std::fs::create_dir_all(&real_a_dir);
+
+        let n = Normalizer::new(Some(temp_dir.clone()));
+
+        // Case 1: `a/nested/file.rs` exists under real `a/`, so `a/` is preserved as a directory
+        let parsed = n.parse("a/nested/file.rs:10").unwrap();
+        assert_eq!(
+            parsed.file,
+            temp_dir.join("a/nested/file.rs").to_string_lossy()
+        );
+
+        // Case 2: `a/other/file.rs` does not exist under `a/`, so `a/` is treated as a diff prefix and stripped
+        let parsed2 = n.parse("a/other/file.rs:10").unwrap();
+        assert_eq!(
+            parsed2.file,
+            temp_dir.join("other/file.rs").to_string_lossy()
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
