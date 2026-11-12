@@ -727,7 +727,7 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
-    /// Target editor or viewer to launch (nvim, cursor, code, bat, hx, zed, subl, nano, emacsclient)
+    /// Target editor or viewer to launch (nvim, cursor, code, bat, cat, hx, zed, subl, nano, emacsclient)
     #[arg(short, long, env = "EDITOR", default_value = "nvim")]
     editor: String,
 
