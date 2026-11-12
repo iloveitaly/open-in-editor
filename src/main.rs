@@ -22,9 +22,7 @@ static RE_ANSI: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\].*?(?:\x07|\x1B\\)").unwrap()
 });
 
-static RE_MARKDOWN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\[.*?\]\((.+)\)$").unwrap()
-});
+static RE_MARKDOWN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\[.*?\]\((.+)\)$").unwrap());
 
 static RE_EDITOR_URI: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:vscode|vscode-insiders|cursor|zed|windsurf)://file/?(.*)$").unwrap()
@@ -35,46 +33,37 @@ static RE_GIT_STATUS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:[ MADRCU?!]{1,2}|[RC]\d{1,3})\s+(.*)$").unwrap()
 });
 
-static RE_DIFF_HEADER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:---|\+\+\+)\s+(?:[ab]/)?(.*)$").unwrap()
-});
+static RE_DIFF_HEADER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:---|\+\+\+)\s+(?:[ab]/)?(.*)$").unwrap());
 
-static RE_PY_TRACEBACK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"^File "([^"]+)", line (\d+)(?:, in .*)?$"#).unwrap()
-});
+static RE_PY_TRACEBACK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"^File "([^"]+)", line (\d+)(?:, in .*)?$"#).unwrap());
 
-static RE_RUST_DIAG: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:\s*\d*\s*\|\s*)?-->\s+(.+?):(\d+):(\d+)\s*$").unwrap()
-});
+static RE_RUST_DIAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(?:\s*\d*\s*\|\s*)?-->\s+(.+?):(\d+):(\d+)\s*$").unwrap());
 
 static RE_V8_PAREN: LazyLock<Regex> = LazyLock::new(|| {
     // Greedy match inside outer parens safely supports Next.js/SvelteKit paths like (app)
     Regex::new(r"^at\s+.+?\s+\((.+):(\d+):(\d+)\)$").unwrap()
 });
 
-static RE_V8_BARE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^at\s+(?:async\s+)?(.+):(\d+):(\d+)$").unwrap()
-});
+static RE_V8_BARE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^at\s+(?:async\s+)?(.+):(\d+):(\d+)$").unwrap());
 
-static RE_FRAG_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(.+?)#L?(\d+)(?:C(\d+))?-L?(\d+)(?:C(\d+))?$").unwrap()
-});
+static RE_FRAG_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+?)#L?(\d+)(?:C(\d+))?-L?(\d+)(?:C(\d+))?$").unwrap());
 
-static RE_FRAG_SINGLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(.+?)#L?(\d+)(?:C(\d+))?$").unwrap()
-});
+static RE_FRAG_SINGLE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+?)#L?(\d+)(?:C(\d+))?$").unwrap());
 
-static RE_PAREN_COORDS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(.+?)\((\d+)(?:[,:]\s*(\d+))?\)(?:\s*:.*)?$").unwrap()
-});
+static RE_PAREN_COORDS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+?)\((\d+)(?:[,:]\s*(\d+))?\)(?:\s*:.*)?$").unwrap());
 
-static RE_COLON_FULL_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(.+?):(\d+):(\d+)-(\d+)(?::(\d+))?(?::.*)?$").unwrap()
-});
+static RE_COLON_FULL_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+?):(\d+):(\d+)-(\d+)(?::(\d+))?(?::.*)?$").unwrap());
 
-static RE_COLON_LINE_RANGE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(.+?):(\d+)-(\d+)(?::.*)?$").unwrap()
-});
+static RE_COLON_LINE_RANGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+?):(\d+)-(\d+)(?::.*)?$").unwrap());
 
 static RE_COLON_STANDARD: LazyLock<Regex> = LazyLock::new(|| {
     // Supports trailing colon, compiler diagnostics, and unspaced ripgrep/grep previews
@@ -128,9 +117,8 @@ pub struct Normalizer {
 
 impl Normalizer {
     pub fn new(base_dir: Option<PathBuf>, anchor_relative: bool) -> Self {
-        let base = base_dir.unwrap_or_else(|| {
-            env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        });
+        let base =
+            base_dir.unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         Self {
             base_dir: base,
             anchor_relative,
@@ -236,9 +224,15 @@ impl Normalizer {
 
             // Handle unmatched leading or trailing quotes from imprecise mouse selections
             for quote in ['"', '\'', '`'] {
-                if s.starts_with(quote) && !s.ends_with(quote) && s.chars().filter(|&c| c == quote).count() == 1 {
+                if s.starts_with(quote)
+                    && !s.ends_with(quote)
+                    && s.chars().filter(|&c| c == quote).count() == 1
+                {
                     s = s[quote.len_utf8()..].trim_start().to_string();
-                } else if s.ends_with(quote) && !s.starts_with(quote) && s.chars().filter(|&c| c == quote).count() == 1 {
+                } else if s.ends_with(quote)
+                    && !s.starts_with(quote)
+                    && s.chars().filter(|&c| c == quote).count() == 1
+                {
                     s.pop();
                     s = s.trim_end().to_string();
                 }
@@ -291,16 +285,21 @@ impl Normalizer {
             let (path_part, query_coords) = Self::split_uri_query(rest);
             let decoded = Self::percent_decode(path_part);
             // Ensure leading slash for absolute Unix paths when `vscode://file/Users/...` is unpacked
-            let normalized = if !decoded.starts_with('/') && !decoded.chars().nth(1).is_some_and(|c| c == ':') {
-                let candidate = format!("/{decoded}");
-                if Path::new(&candidate).exists() || decoded.starts_with("Users/") || decoded.starts_with("home/") || decoded.starts_with("tmp/") {
-                    candidate
+            let normalized =
+                if !decoded.starts_with('/') && !decoded.chars().nth(1).is_some_and(|c| c == ':') {
+                    let candidate = format!("/{decoded}");
+                    if Path::new(&candidate).exists()
+                        || decoded.starts_with("Users/")
+                        || decoded.starts_with("home/")
+                        || decoded.starts_with("tmp/")
+                    {
+                        candidate
+                    } else {
+                        decoded
+                    }
                 } else {
                     decoded
-                }
-            } else {
-                decoded
-            };
+                };
             return (normalized, query_coords);
         }
 
@@ -385,12 +384,13 @@ impl Normalizer {
             if full_candidate.exists() {
                 return path.to_string();
             }
-            if physical_prefix_dir.is_dir() && !self.base_dir.join(downstream).exists() {
-                if let Some(parent) = Path::new(downstream).parent() {
-                    if !parent.as_os_str().is_empty() && physical_prefix_dir.join(parent).is_dir() {
-                        return path.to_string();
-                    }
-                }
+            if physical_prefix_dir.is_dir()
+                && !self.base_dir.join(downstream).exists()
+                && Path::new(downstream).parent().is_some_and(|parent| {
+                    !parent.as_os_str().is_empty() && physical_prefix_dir.join(parent).is_dir()
+                })
+            {
+                return path.to_string();
             }
             return downstream.to_string();
         }
@@ -488,7 +488,10 @@ impl Normalizer {
         s.parse::<usize>().ok().filter(|&n| n >= 1)
     }
 
-    fn merge_coordinates(primary: Option<Coordinates>, secondary: Option<Coordinates>) -> Option<Coordinates> {
+    fn merge_coordinates(
+        primary: Option<Coordinates>,
+        secondary: Option<Coordinates>,
+    ) -> Option<Coordinates> {
         match (primary, secondary) {
             (Some(p), Some(s)) => Some((p.0.or(s.0), p.1.or(s.1), p.2.or(s.2), p.3.or(s.3))),
             (Some(p), None) => Some(p),
@@ -589,7 +592,11 @@ impl Dispatcher {
 
         let mut cmd = match editor {
             "nvim" | "neovim" | "vim" | "vi" => {
-                let bin = if editor.starts_with('n') { "nvim" } else { "vim" };
+                let bin = if editor.starts_with('n') {
+                    "nvim"
+                } else {
+                    "vim"
+                };
                 let mut cmd = Command::new(bin);
                 if reference.line.is_some() || reference.column.is_some() {
                     cmd.arg(format!("+call cursor({l}, {c})"));
@@ -674,8 +681,12 @@ impl Dispatcher {
 
         let l = reference.line.unwrap_or(1).to_string();
         let c = reference.column.unwrap_or(1).to_string();
-        let el = reference.end_line.map_or_else(String::new, |v| v.to_string());
-        let ec = reference.end_column.map_or_else(String::new, |v| v.to_string());
+        let el = reference
+            .end_line
+            .map_or_else(String::new, |v| v.to_string());
+        let ec = reference
+            .end_column
+            .map_or_else(String::new, |v| v.to_string());
 
         let mut cmd = Command::new(bin);
         for token in raw_args {
@@ -721,7 +732,10 @@ impl Dispatcher {
 // ============================================================================
 
 #[derive(Parser, Debug)]
-#[command(name = "ref-normalizer", about = "Deterministic terminal file reference normalizer")]
+#[command(
+    name = "open-in-editor",
+    about = "Deterministic terminal file reference opener and editor dispatcher"
+)]
 struct Cli {
     /// Base directory for resolving relative paths and git diff disambiguation
     #[arg(short = 'C', long = "base-dir")]
@@ -784,7 +798,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(status.code().unwrap_or(1) as u8);
                 }
                 Err(err) => {
-                    eprintln!("ref-normalizer: failed to execute editor: {err}");
+                    eprintln!("open-in-editor: failed to execute editor: {err}");
                     return ExitCode::FAILURE;
                 }
             }
@@ -871,13 +885,12 @@ mod tests {
     fn test_git_status_and_diff_prefixes() {
         let n = norm();
         // Leading space in git status porcelain (" M ")
-        assert_eq!(
-            n.parse(" M src/main.py:12").unwrap().file,
-            "src/main.py"
-        );
+        assert_eq!(n.parse(" M src/main.py:12").unwrap().file, "src/main.py");
         // Rename with spaces and score
         assert_eq!(
-            n.parse("R100 \"src/old name.py\" -> \"src/new name.py\"").unwrap().file,
+            n.parse("R100 \"src/old name.py\" -> \"src/new name.py\"")
+                .unwrap()
+                .file,
             "src/new name.py"
         );
         // Diff header and bare a/ prefix with coordinates
@@ -959,6 +972,6 @@ mod tests {
 
         let mut buf = Vec::new();
         r.write_nul(&mut buf).unwrap();
-        assert_eq!(buf, b"./-unusual-filename.py\015\03\0\0\0");
+        assert_eq!(buf, b"./-unusual-filename.py\x0015\x003\x00\x00\x00");
     }
 }
